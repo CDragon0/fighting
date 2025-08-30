@@ -10,7 +10,7 @@
             padding: 20px;
             background: linear-gradient(to bottom, #1a1a2e, #16213e);
             color: white;
-            font-family: Arial, sans-serif;
+            font-family: 'Arial', sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -20,6 +20,7 @@
         h1 {
             text-shadow: 0 0 10px #00f7ff;
             margin-bottom: 10px;
+            font-size: 36px;
         }
         
         .game-container {
@@ -45,6 +46,7 @@
             padding: 15px;
             border-radius: 10px;
             border: 2px solid #00f7ff;
+            width: 380px;
         }
         
         .player-controls h3 {
@@ -59,13 +61,18 @@
             margin-bottom: 10px;
         }
         
-        .health-bar {
+        .player-info {
             width: 300px;
+        }
+        
+        .health-bar {
+            width: 100%;
             height: 30px;
             background: #333;
             border: 2px solid #000;
             border-radius: 5px;
             overflow: hidden;
+            margin-top: 5px;
         }
         
         .health-fill {
@@ -110,20 +117,39 @@
         .restart-button:hover {
             background: #00aaff;
         }
+        
+        .round-display {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 2px solid #00f7ff;
+        }
+        
+        .special-move {
+            margin-top: 10px;
+            font-style: italic;
+            color: #00f7ff;
+        }
     </style>
 </head>
 <body>
     <h1>Street Fighter Stick Figures</h1>
     
     <div class="health-container">
-        <div>
-            <h3>Player 1</h3>
+        <div class="player-info">
+            <h3>Player 1 - RED FIGHTER</h3>
             <div class="health-bar">
                 <div id="player1Health" class="health-fill" style="width: 100%;"></div>
             </div>
         </div>
-        <div>
-            <h3>Player 2</h3>
+        <div class="player-info">
+            <h3>Player 2 - GREEN FIGHTER</h3>
             <div class="health-bar">
                 <div id="player2Health" class="health-fill" style="width: 100%;"></div>
             </div>
@@ -131,6 +157,7 @@
     </div>
     
     <div class="game-container">
+        <div class="round-display">Round <span id="roundNumber">1</span></div>
         <canvas id="gameCanvas" width="800" height="400"></canvas>
         <div class="winner-display" id="winnerDisplay"></div>
     </div>
@@ -139,12 +166,16 @@
         <div class="player-controls">
             <h3>Player 1 Controls</h3>
             <p>Move: W, A, S, D</p>
-            <p>Attack: F</p>
+            <p>Jump: W (double tap)</p>
+            <p>Attack: F (Punch)</p>
+            <p class="special-move">Special: D + F (Uppercut)</p>
         </div>
         <div class="player-controls">
             <h3>Player 2 Controls</h3>
-            <p>Move: Arrow Keys (O, K, L, ;)</p>
-            <p>Attack: J</p>
+            <p>Move: O, K, L, ;</p>
+            <p>Jump: O (double tap)</p>
+            <p>Attack: J (Punch)</p>
+            <p class="special-move">Special: K + J (Uppercut)</p>
         </div>
     </div>
     
@@ -155,36 +186,60 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const winnerDisplay = document.getElementById('winnerDisplay');
+        const roundNumber = document.getElementById('roundNumber');
         
         // Game state
         let gameRunning = true;
+        let round = 1;
+        let particles = [];
         
         // Player class
         class Player {
-            constructor(x, y, color, controls) {
+            constructor(x, y, color, controls, name) {
                 this.x = x;
                 this.y = y;
                 this.width = 40;
                 this.height = 80;
                 this.color = color;
                 this.health = 100;
+                this.maxHealth = 100;
                 this.speed = 5;
+                this.jumpPower = 15;
+                this.velocityY = 0;
+                this.gravity = 0.8;
+                this.onGround = true;
                 this.punching = false;
+                this.kicking = false;
+                this.uppercut = false;
                 this.punchCooldown = 0;
+                this.kickCooldown = 0;
+                this.uppercutCooldown = 0;
                 this.hitCooldown = 0;
                 this.controls = controls;
                 this.keys = {};
                 this.facingRight = controls === 'wasd';
+                this.name = name;
+                this.lastJumpTime = 0;
+                this.jumpCount = 0;
+                this.attackType = '';
             }
             
             update() {
+                // Apply gravity
+                this.velocityY += this.gravity;
+                this.y += this.velocityY;
+                
+                // Ground collision
+                if (this.y > canvas.height - this.height - 20) {
+                    this.y = canvas.height - this.height - 20;
+                    this.velocityY = 0;
+                    this.onGround = true;
+                    this.jumpCount = 0;
+                } else {
+                    this.onGround = false;
+                }
+                
                 // Movement
-                if (this.keys[this.controls.up] && this.y > 0) {
-                    this.y -= this.speed;
-                }
-                if (this.keys[this.controls.down] && this.y < canvas.height - this.height) {
-                    this.y += this.speed;
-                }
                 if (this.keys[this.controls.left] && this.x > 0) {
                     this.x -= this.speed;
                     this.facingRight = false;
@@ -194,10 +249,33 @@
                     this.facingRight = true;
                 }
                 
-                // Punching
+                // Jumping
+                if (this.keys[this.controls.up]) {
+                    const currentTime = Date.now();
+                    if (this.onGround) {
+                        this.velocityY = -this.jumpPower;
+                        this.onGround = false;
+                        this.jumpCount = 1;
+                        this.lastJumpTime = currentTime;
+                    } else if (this.jumpCount < 2 && currentTime - this.lastJumpTime > 200) {
+                        this.velocityY = -this.jumpPower * 0.8;
+                        this.jumpCount = 2;
+                        this.lastJumpTime = currentTime;
+                    }
+                }
+                
+                // Attacks
                 if (this.keys[this.controls.attack] && this.punchCooldown <= 0) {
                     this.punching = true;
-                    this.punchCooldown = 20;
+                    this.attackType = 'punch';
+                    this.punchCooldown = 15;
+                }
+                
+                // Special move (uppercut)
+                if (this.keys[this.controls.right] && this.keys[this.controls.attack] && this.uppercutCooldown <= 0) {
+                    this.uppercut = true;
+                    this.attackType = 'uppercut';
+                    this.uppercutCooldown = 40;
                 }
                 
                 // Cooldowns
@@ -205,6 +283,18 @@
                     this.punchCooldown--;
                 } else {
                     this.punching = false;
+                }
+                
+                if (this.kickCooldown > 0) {
+                    this.kickCooldown--;
+                } else {
+                    this.kicking = false;
+                }
+                
+                if (this.uppercutCooldown > 0) {
+                    this.uppercutCooldown--;
+                } else {
+                    this.uppercut = false;
                 }
                 
                 if (this.hitCooldown > 0) {
@@ -226,23 +316,30 @@
                 ctx.lineTo(this.x + this.width/2, this.y + 60);
                 
                 // Arms
-                const armOffset = this.punching ? 20 : 10;
-                if (this.facingRight) {
-                    ctx.moveTo(this.x + this.width/2, this.y + 40);
-                    ctx.lineTo(this.x + this.width/2 + armOffset, this.y + 35);
-                    ctx.moveTo(this.x + this.width/2, this.y + 40);
-                    ctx.lineTo(this.x + this.width/2 + armOffset, this.y + 45);
-                } else {
-                    ctx.moveTo(this.x + this.width/2, this.y + 40);
-                    ctx.lineTo(this.x + this.width/2 - armOffset, this.y + 35);
-                    ctx.lineTo(this.x + this.width/2 - armOffset, this.y + 45);
+                let armOffsetX = this.facingRight ? 10 : -10;
+                let armOffsetY = 0;
+                
+                if (this.punching) {
+                    armOffsetX = this.facingRight ? 25 : -25;
+                    armOffsetY = -5;
+                } else if (this.uppercut) {
+                    armOffsetX = this.facingRight ? 15 : -15;
+                    armOffsetY = -25;
                 }
                 
+                ctx.moveTo(this.x + this.width/2, this.y + 40);
+                ctx.lineTo(this.x + this.width/2 + armOffsetX, this.y + 40 + armOffsetY);
+                
+                // Second arm
+                ctx.moveTo(this.x + this.width/2, this.y + 45);
+                ctx.lineTo(this.x + this.width/2 + (this.facingRight ? 10 : -10), this.y + 50);
+                
                 // Legs
+                const legOffset = this.onGround ? 0 : 10;
                 ctx.moveTo(this.x + this.width/2, this.y + 60);
-                ctx.lineTo(this.x + this.width/2 - 10, this.y + 80);
+                ctx.lineTo(this.x + this.width/2 - 10, this.y + 80 + legOffset);
                 ctx.moveTo(this.x + this.width/2, this.y + 60);
-                ctx.lineTo(this.x + this.width/2 + 10, this.y + 80);
+                ctx.lineTo(this.x + this.width/2 + 10, this.y + 80 + legOffset);
                 
                 ctx.stroke();
                 
@@ -255,29 +352,66 @@
                 }
             }
             
-            getPunchBox() {
-                if (this.facingRight) {
-                    return {
-                        x: this.x + this.width/2,
-                        y: this.y + 35,
-                        width: 30,
-                        height: 20
-                    };
-                } else {
-                    return {
-                        x: this.x - 30,
-                        y: this.y + 35,
-                        width: 30,
-                        height: 20
-                    };
-                }
+            getHitBox() {
+                return {
+                    x: this.x + 5,
+                    y: this.y + 10,
+                    width: this.width - 10,
+                    height: this.height - 10
+                };
             }
             
-            takeDamage() {
+            getAttackBox() {
+                if (this.punching) {
+                    if (this.facingRight) {
+                        return {
+                            x: this.x + this.width,
+                            y: this.y + 35,
+                            width: 30,
+                            height: 15
+                        };
+                    } else {
+                        return {
+                            x: this.x - 30,
+                            y: this.y + 35,
+                            width: 30,
+                            height: 15
+                        };
+                    }
+                } else if (this.uppercut) {
+                    if (this.facingRight) {
+                        return {
+                            x: this.x + this.width,
+                            y: this.y + 20,
+                            width: 25,
+                            height: 25
+                        };
+                    } else {
+                        return {
+                            x: this.x - 25,
+                            y: this.y + 20,
+                            width: 25,
+                            height: 25
+                        };
+                    }
+                }
+                return {x: 0, y: 0, width: 0, height: 0};
+            }
+            
+            takeDamage(damage) {
                 if (this.hitCooldown <= 0) {
-                    this.health -= 10;
+                    this.health -= damage;
                     this.hitCooldown = 20;
                     updateHealthBars();
+                    
+                    // Create hit particles
+                    for (let i = 0; i < 10; i++) {
+                        particles.push(new Particle(
+                            this.x + this.width/2,
+                            this.y + 30,
+                            this.color
+                        ));
+                    }
                     
                     if (this.health <= 0) {
                         this.health = 0;
@@ -288,6 +422,32 @@
             }
         }
         
+        // Particle class for effects
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 5 + 2;
+                this.speedX = Math.random() * 6 - 3;
+                this.speedY = Math.random() * 6 - 3;
+                this.color = color;
+                this.life = 30;
+            }
+            
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.life--;
+            }
+            
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        
         // Create players
         const player1 = new Player(100, 250, '#ff0000', {
             up: 'w',
@@ -295,7 +455,7 @@
             left: 'a',
             right: 'd',
             attack: 'f'
-        });
+        }, "RED FIGHTER");
         
         const player2 = new Player(600, 250, '#00ff00', {
             up: 'o',
@@ -303,7 +463,7 @@
             left: 'k',
             right: ';',
             attack: 'j'
-        });
+        }, "GREEN FIGHTER");
         
         // Update health bars
         function updateHealthBars() {
@@ -313,27 +473,62 @@
         
         // Check for collisions
         function checkCollisions() {
-            if (player1.punching && !player2.punching) {
-                const punchBox = player1.getPunchBox();
-                if (punchBox.x < player2.x + player2.width &&
-                    punchBox.x + punchBox.width > player2.x &&
-                    punchBox.y < player2.y + player2.height &&
-                    punchBox.y + punchBox.height > player2.y) {
-                    if (player2.takeDamage()) {
-                        endGame("Player 1 Wins!");
+            // Player collision
+            const p1Box = player1.getHitBox();
+            const p2Box = player2.getHitBox();
+            
+            if (p1Box.x < p2Box.x + p2Box.width &&
+                p1Box.x + p1Box.width > p2Box.x &&
+                p1Box.y < p2Box.y + p2Box.height &&
+                p1Box.y + p1Box.height > p2Box.y) {
+                // Separate players
+                const dx = (p1Box.x + p1Box.width/2) - (p2Box.x + p2Box.width/2);
+                const dy = (p1Box.y + p1Box.height/2) - (p2Box.y + p2Box.height/2);
+                
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    if (dx > 0) {
+                        player1.x += 2;
+                        player2.x -= 2;
+                    } else {
+                        player1.x -= 2;
+                        player2.x += 2;
+                    }
+                } else {
+                    if (dy > 0) {
+                        player1.y += 2;
+                        player2.y -= 2;
+                    } else {
+                        player1.y -= 2;
+                        player2.y += 2;
                     }
                 }
             }
             
-            if (player2.punching && !player1.punching) {
-                const punchBox = player2.getPunchBox();
-                if (punchBox.x < player1.x + player1.width &&
-                    punchBox.x + punchBox.width > player1.x &&
-                    punchBox.y < player1.y + player1.height &&
-                    punchBox.y + punchBox.height > player1.y) {
-                    if (player1.takeDamage()) {
-                        endGame("Player 2 Wins!");
-                    }
+            // Attack collisions
+            const p1Attack = player1.getAttackBox();
+            const p2Attack = player2.getAttackBox();
+            
+            // Player 1 attacks Player 2
+            if (p1Attack.width > 0 && 
+                p1Attack.x < p2Box.x + p2Box.width &&
+                p1Attack.x + p1Attack.width > p2Box.x &&
+                p1Attack.y < p2Box.y + p2Box.height &&
+                p1Attack.y + p1Attack.height > p2Box.y) {
+                const damage = player1.uppercut ? 20 : 10;
+                if (player2.takeDamage(damage)) {
+                    endGame("Player 1 Wins!");
+                }
+            }
+            
+            // Player 2 attacks Player 1
+            if (p2Attack.width > 0 && 
+                p2Attack.x < p1Box.x + p1Box.width &&
+                p2Attack.x + p2Attack.width > p1Box.x &&
+                p2Attack.y < p1Box.y + p1Box.height &&
+                p2Attack.y + p2Attack.height > p1Box.y) {
+                const damage = player2.uppercut ? 20 : 10;
+                if (player1.takeDamage(damage)) {
+                    endGame("Player 2 Wins!");
                 }
             }
         }
@@ -353,9 +548,12 @@
             player1.y = 250;
             player2.x = 600;
             player2.y = 250;
+            player1.velocityY = 0;
+            player2.velocityY = 0;
             gameRunning = true;
             winnerDisplay.style.display = 'none';
             updateHealthBars();
+            particles = [];
         }
         
         // Draw ground
@@ -365,6 +563,19 @@
             
             ctx.fillStyle = '#228B22';
             ctx.fillRect(0, canvas.height - 20, canvas.width, 5);
+        }
+        
+        // Draw particles
+        function drawParticles() {
+            for (let i = 0; i < particles.length; i++) {
+                particles[i].update();
+                particles[i].draw();
+                
+                if (particles[i].life <= 0) {
+                    particles.splice(i, 1);
+                    i--;
+                }
+            }
         }
         
         // Game loop
@@ -383,6 +594,9 @@
                 // Check for collisions
                 checkCollisions();
             }
+            
+            // Draw particles
+            drawParticles();
             
             // Draw players
             player1.draw();
